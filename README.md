@@ -10,7 +10,8 @@ This benchmarking pipeline is designed to provide a comprehensive evaluation of 
 (5) the computational efficiency.<br>
 
 ### Processed Data
-The processed datasets required for reproduction are available on Zenodo and can be accessed via this DOI link:
+The processed datasets required for reproduction are available on Zenodo and can be accessed via this DOI link:<br>
+https://doi.org/10.5281/zenodo.14601139
 Please download and store them in the appropriate directories as required by the scripts.
 
 ### Reproduction Steps
@@ -22,5 +23,7 @@ We provide the code to reproduce the evaluation results and figures from our wor
 - 03-BenchmarkTCGA.Rmd contains the code used to perform survival analysis using TCGA data.
 - 04-BenchmarkRanks.Rmd contains the code used to rank each method based on six categories: ST SGE prediction, Visium SGE prediction, model generalisability, clinical impact, usability, and efficiency. The rankings are visualized using a funky heatmap.
 
-
+### Reference
 If you have any questions, particularly regarding data processing, please contact chuhan.wang@sydney.edu.au. We welcome any suggestions and comments.
+
+Wang, C., & Chan, A. (2025). Benchmarking the translational potential of spatial gene expression prediction from histology. Zenodo. https://doi.org/10.5281/zenodo.14601139
