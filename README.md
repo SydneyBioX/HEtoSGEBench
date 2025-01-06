@@ -11,7 +11,7 @@ This benchmarking pipeline is designed to provide a comprehensive evaluation of 
 
 ### Processed Data
 The processed datasets required for reproduction are available on Zenodo and can be accessed via this DOI link:<br>
-https://doi.org/10.5281/zenodo.14601139.<br>
+https://doi.org/10.5281/zenodo.14602489<br>
 Please download and store them in the appropriate directories as required by the scripts.
 
 ### Reproduction Steps
@@ -26,4 +26,4 @@ We provide the code to reproduce the evaluation results and figures from our wor
 ### Reference
 If you have any questions, particularly regarding data processing, please contact chuhan.wang@sydney.edu.au. We welcome any suggestions and comments.
 
-Wang, C., & Chan, A. (2025). Benchmarking the translational potential of spatial gene expression prediction from histology. Zenodo. https://doi.org/10.5281/zenodo.14601139
+Wang, C., & Chan, A. (2025). Benchmarking the translational potential of spatial gene expression prediction from histology (3.0). Zenodo. https://doi.org/10.5281/zenodo.14602489
