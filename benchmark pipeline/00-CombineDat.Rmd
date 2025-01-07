@@ -1,0 +1,110 @@
+---
+title: "00-CombineDat.Rmd"
+output: html_document
+date: "2024-12-30"
+editor_options: 
+  chunk_output_type: console
+license: >
+  Copyright 2024 Chuhan Wang, Adam S. Chan, Xiaohang Fu, Shila Ghazanfar, Jinman Kim, Ellis Patrick, Jean YH Yang. Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0. Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script displays the code used to calculate several evaluation metrics between the predicted spatial gene expression data and the original data from several models.  
+
+### Load functions required
+
+```{r}
+suppressPackageStartupMessages({
+  library(rlang)
+  library(dplyr)
+  library(tidyr)
+  source("benchmarkUtils.R")
+})
+rename <- dplyr::rename
+select <- dplyr::select
+slice <- dplyr::slice
+```
+
+### Example - Load HER2+ Data
+
+The .rds file contains a long dataframe that has the following columns:
+
+Required:
+
+- img_id - the label for each image
+- model_id - the id for the model used to generate the predicted gene expression. If multiple models are compared, then this will contain more than one model.
+- pred_type - whether the prediction was generated from using the "train", "test" or "validation" data of the model. Requires at least one value. 
+- train_fold - If cross validation was used for model training, this column identifies which training fold was used to train the corresponding model.
+- gene- the name of the gene being predicted
+- exprs - the original data the data was trained on (after any transformations)
+- pred - the predicted gene expression
+- patch_id - the id for the patch the gene expression was predicted, contains the coordinates of the patch within the img. This column is in the form <img_id>_<x-coordinate>x<y-coordinate>
+
+Optional:
+
+- row_id - an identifier for each row in the dataframe
+
+A (very small) subset of the original data used for benchmark is presented below
+
+```{r}
+comb_pred_dat <- readRDS("data/processed/her2st/comb_pred_dat_her2st_samp.rds")
+glimpse(comb_pred_dat)
+```
+
+### Calculate metrics
+
+```{r}
+exprs_orig_df <- comb_pred_dat %>%
+  #Get ground truth exprs from DeepPT as it used original
+  filter(model_id == "DeepPT") %>%
+  select(patch_id, gene, exprs) %>%
+  distinct()
+
+## Feature Correlation
+pred_feat_cor <- comb_pred_dat %>%
+  # Get x & y coordinates for SSIM calculation
+  separate(
+    patch_id ,
+    into = c("img_id", "x_y"),
+    sep = "_",
+    convert = TRUE,
+    remove=FALSE
+  ) %>%
+  separate(x_y, into = c("x", "y"), sep = "x") %>%
+  left_join(
+    exprs_orig_df %>%
+      rename(exprs_orig = exprs),
+    by = c("patch_id" = "patch_id",
+           "gene" = "gene")
+  ) %>%
+  group_by(gene, pred_type, train_fold, model_id, img_id) %>%
+  summarise(
+    cor_pearson = cor(exprs, pred, method = "pearson"),
+    cor_spearman = cor(exprs, pred, method = "spearman"),
+    var_exprs = var(exprs),
+    var_exprs_orig = var(exprs_orig),
+    var_pred = var(pred),
+    mean_exprs = mean(exprs),
+    mean_exprs_orig = mean(exprs_orig),
+    mean_pred = mean(pred),
+    rmse = sqrt(sum((pred - exprs) ^ 2) / n()),
+    mi = calculate_MI(pred, exprs),
+    js_div = calculate_JS_divergence(pred, exprs),
+    nrmse_range = calculate_nrmse(pred, exprs, "range"),
+    nrmse_sd = calculate_nrmse(pred, exprs, "sd"),
+    ssim = calculate_SSIM(pred, exprs),
+    auc_0 = calculate_AUC(pred, exprs_orig, 0),
+    auc_1 = calculate_AUC(pred, exprs_orig, 1),
+    auc_2 = calculate_AUC(pred, exprs_orig, 2),
+    auc_5 = calculate_AUC(pred, exprs_orig, 5),
+    auc_7 = calculate_AUC(pred, exprs_orig, 7),
+    auc_10 = calculate_AUC(pred, exprs_orig, 10),
+    auc_20 = calculate_AUC(pred, exprs_orig, 20),
+    .groups = "drop"
+  )
+
+```
+

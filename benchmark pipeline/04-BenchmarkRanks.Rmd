@@ -1,0 +1,450 @@
+---
+title: "04-BenchmarkRanks"
+date: "2024-12-30"
+editor_options: 
+  chunk_output_type: console
+output: 
+  html_document:
+    code_folding: hide
+license: >
+  Copyright 2024 Chuhan Wang, Adam S. Chan, Xiaohang Fu, Shila Ghazanfar, Jinman Kim, Ellis Patrick, Jean YH Yang. Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0. Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Data Loading
+
+### Libraries
+```{r}
+suppressPackageStartupMessages({
+  # Load required packages
+  library(dplyr)
+  library(magrittr)
+  library(janitor)
+  library(tidyr)
+  library(stringr)
+  source("benchmarkUtils.R")
+  library(funkyheatmap)
+  library(ggthemr)
+})
+
+rename <- dplyr::rename
+select <- dplyr::select
+slice <- dplyr::slice
+# Set ggplot theme
+ggthemr_reset()
+ggthemr('pale')
+mycolors <- c("#999999", "#0072B2", "#E69F00", "#F0E442", "#D9B3FF", "#009E73",  
+               "#D55E00", "#5D8AA8", "#CC79A7", "#56B4E9",
+              "#F3B3A6", "#A5AB81", "#B2182B", "#4393C3", "#CDBE6B", 
+              "#80CDC1", "#F4A582", "#BABABA", "#CCEBC5", "#DECBE4",
+              "#FDDFDF", "#B3DE69", "#FDBF6F", "#CCECE6", "#FB8072")
+
+mypalette <- define_palette(
+  swatch = mycolors,
+  gradient = c(lower = mycolors[1L], upper = mycolors[3L])
+)
+
+ggthemr(mypalette) # for some reason it uses the first colour as the colour of the grid lines
+theme_update(panel.grid.major = element_line(linetype="dotted"))
+```
+
+
+### Rank Data
+
+Load data
+```{r}
+pred_rank_df_tcgabrca <- readRDS(file="data/processed/her2st/pred_rank_df_tcgabrca.rds")
+
+pred_rank_df_train <- readRDS(file="data/processed/her2st/pred_rank_df.rds")
+
+whole_bc_pred_rank_df <- readRDS(file="data/processed/visium/pred_rank_df_whole_bc_visium.rds")
+
+kidney_pred_rank_df <- readRDS(file="data/processed/visium/pred_rank_df_kidney_visium.rds")
+
+pred_rank_df_tcgaclintrans <-  readRDS(file="data/processed/her2st/pred_rank_df_tcga_clinicaltrans.rds")
+
+load(file='data/processed/methods_usability_dat.RData')
+```
+
+### Supplementary Figure 19 - Method Performance
+```{r fig.height=6, fig.width=8}
+perf_df <- read.csv("data/processed/performance_results.csv")
+
+perf_df %>% 
+  filter(epoch!=1)%>%
+  pivot_longer(cols=!c("method","device","epoch"),
+               names_to="metric", values_to="value") %>%
+  ggplot() +
+  aes(x=method, y=log10(value))+
+  geom_boxplot()+
+  facet_wrap(~metric+device, scales="free",ncol=2) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+```
+
+### Rank Performance 
+```{r fig.height=6, fig.width=8}
+perf_rank_df <- perf_df %>% 
+  filter(epoch!=1) %>%
+  pivot_longer(cols=!c("method","device","epoch","time"),
+               names_to="metric", values_to="value") %>%
+  group_by(method, metric) %>%
+  summarise(mean_log_val = mean(log10(value)), mean_time = mean(time)) %>% 
+  group_by(metric) %>% 
+  mutate(rank_mem = rank(mean_log_val)) %>%
+  mutate(overall_time_r = rank(mean_time)) %>% 
+  select(-mean_log_val) %>%
+  pivot_wider(names_from="metric", values_from="rank_mem") %>%
+  rename(c("instantaneous_memory_r"="current_memory",
+           "peak_memory_r"="peak_memory")) %>%
+  left_join(
+    perf_df %>% 
+      filter(epoch!=1) %>% 
+      select(-contains("memory")) %>% 
+      group_by(device, method) %>% 
+      summarise(time = mean(time)) %>% 
+      pivot_wider(names_from = "device", values_from="time") %>% 
+      mutate(time_gpu_r = rank(cuda), 
+             time_cpu_r = rank(cpu)) %>%
+      mutate(time_gpu_r = ifelse(is.na(cuda), NA, time_gpu_r),
+             time_cpu_r = ifelse(is.na(cpu), NA, time_cpu_r)) %>%
+      select(-cuda, -cpu),
+    by="method"
+  ) %>%
+  rowwise() %>%
+  mutate(perf_rank = mean(c(instantaneous_memory_r, peak_memory_r,
+                          overall_time_r), na.rm=T))
+```
+
+### Overall Heatmap
+
+```{r message=FALSE}
+# Make a data frame with each of the models
+scale_values <- function(x){(x-min(x,na.rm=T))/(max(x,na.rm=T)-min(x,na.rm=T))}
+
+benchmark_all_df <- use_score_df %>%
+  rename(usability_overall_score = overall_score) %>%
+  rename(id = method) %>%
+  mutate_at(vars(c("usability_overall_score")),
+            function(col) col/35) %>%
+  mutate(usability_overall_score = replace_na(usability_overall_score, 0)) %>% 
+  mutate(method_platform=case_when(
+    id == "GeneCodeR" ~ "R",
+    id == "Hist2ST" ~ "Python",
+    id == "HisToGene" ~ "Python",
+    id == "ST-Net" ~ "Python",
+    id == "DeepSpaCE" ~ "R & Python",
+    id == "DeepPT" ~ "Python",
+    id == "EGNv1" ~ "Python",
+    id == "EGNv2" ~ "Python",
+    id == "TCGN" ~ "Python",
+    id == "THItoGene" ~ "Python",
+    id == "iStar" ~ "Python",
+    TRUE ~ NA
+  )) %>%
+  mutate(deep_learning=case_when(
+    id == "GeneCodeR" ~ "No",
+    id == "Hist2ST" ~ "Yes",
+    id == "HisToGene" ~ "Yes",
+    id == "ST-Net" ~ "Yes",
+    id == "DeepSpaCE" ~ "Yes",
+    id == "DeepPT" ~ "Yes",
+    id == "EGNv1" ~ "Yes",
+    id == "EGNv2" ~ "Yes",
+    id == "TCGN" ~ "Yes",
+    id == "THItoGene" ~ "Yes",
+    id == "iStar" ~ "Yes",
+    TRUE ~ NA
+  )) %>%
+  mutate(reimplemented=case_when(
+    id == "GeneCodeR" ~ "No",
+    id == "Hist2ST" ~ "No",
+    id == "HisToGene" ~ "No",
+    id == "ST-Net" ~ "Yes",
+    id == "DeepSpaCE" ~ "No",
+    id == "DeepPT" ~ "Yes",
+    id == "EGNv1" ~ "No",
+    id == "EGNv2" ~ "No",
+    id == "TCGN" ~ "No",
+    id == "THItoGene" ~ "No",
+    id == "iStar" ~ "No",
+    TRUE ~ NA
+  )) %>%
+  mutate(trainable_params=case_when(
+    id == "GeneCodeR" ~ "75,264,000",
+    id == "Hist2ST" ~ "230,000,000",
+    id == "HisToGene" ~ "222,253,841",
+    id == "ST-Net" ~ "7,973,733",
+    id == "DeepSpaCE" ~ "137,476,689",
+    id == "DeepPT" ~ "26,641,472",
+    id == "EGNv1" ~ "135,000,000",
+    id == "EGNv2" ~ "12,000,000",
+    id == "TCGN" ~ "29,000,000",
+    id == "THItoGene" ~ "63,600,000",
+    id == "iStar" ~ "2,190,000",
+    TRUE ~ NA
+  )) %>%
+  mutate(whole_image_spatial=ifelse(id %in% c("Hist2ST", "HisToGene", "iStar", "THItoGene"),
+                                    "Yes", "No")) %>%
+  left_join(
+    pred_rank_df_train %>% 
+      pivot_wider(names_from = metric_rank, values_from =rank) %>%
+      filter(gene_set == "all" & pred_type=="test")  %>%
+      select(-c(pred_type, gene_set)) %>%
+      mutate_at(vars(-model_id),
+                function(col) -col),
+    by=c("id"="model_id")
+  ) %>%
+  left_join(
+    whole_bc_pred_rank_df%>% 
+      pivot_wider(names_from = metric_rank, values_from =rank) %>%
+      select(-c(pred_type)) %>%
+      mutate(across(where(is.numeric), ~ - .)) %>%
+    rename_with(~ paste0(.x, "_whole_bc"), -model_id),
+    by=c("id"="model_id")
+  ) %>%
+  left_join(
+    kidney_pred_rank_df%>% 
+      pivot_wider(names_from = metric_rank, values_from =rank) %>%
+      select(-c(pred_type)) %>%
+      mutate(across(where(is.numeric), ~ - .)) %>%
+    rename_with(~ paste0(.x, "_kidney"), -model_id),
+    by=c("id"="model_id")
+  ) %>%
+  left_join(
+    pred_rank_df_tcgabrca %>% 
+      distinct(model_id, metric_rank, rank) %>%
+      pivot_wider(names_from = metric_rank, values_from =rank) %>% 
+      rowwise() %>% 
+      mutate(overall_r = mean(c(mean_pat_rank, mean_gene_rank))) %>%
+      ungroup() %>%
+      mutate_at(vars(-model_id),
+                function(col) -col) %>%
+      `colnames<-`(paste0(colnames(.),"_tcga")),
+    by=c("id"="model_id_tcga")
+  ) %>%
+  left_join(
+    pred_rank_df_tcgaclintrans %>%
+      pivot_wider(names_from = metric_rank, values_from=rank)  %>%
+      mutate_at(vars(-data),
+                function(col) -col),
+    by=c("id"="data")
+  ) %>%
+  mutate(across(where(is.numeric), ~ if_else(is.na(.x), as.integer(min(.x, na.rm = TRUE)) - 1, .x))) %>%
+  left_join(
+    perf_rank_df %>% 
+      mutate_at(vars(-method),
+                function(col) -col),
+    by=c("id"="method")
+  ) %>%
+  left_join(
+    use_cat_score_df,
+    by=c("id"="model_id")
+  ) %>%
+  rowwise() %>%
+  mutate(mean_rank_visium_rank = mean(c(mean_rank_whole_bc,mean_rank_kidney)))%>%
+  mutate(overall_overall_rank = mean(c(mean_rank,mean_rank_whole_bc,mean_rank_kidney, overall_r_tcga,mean_clin_r,perf_rank,usability_overall_score))) %>%
+  
+  arrange(-overall_overall_rank)
+```
+
+
+```{r fig.height=6, fig.width=12, message=FALSE}
+column_info <- tribble(
+  ~id,     ~group,         ~name,                      ~geom,        ~palette,    ~options,
+  "id",    NA,             "",                         "text",       NA,          list(hjust = 0, width = 3),
+  "method_platform",   "characteristics",      "Platform",           "text",        "palette1",  list(width = 4, legend = FALSE),
+  "reimplemented",   "characteristics",      "Remplemented",           "text",        "palette1",  list(legend = FALSE),
+  "deep_learning", "characteristics", "Deep Learning", "text", "palette1", lst(),
+  "trainable_params",   "characteristics",      "#Trainable Parameters",           "text",        "palette1",  list(width = 4, legend = FALSE),
+  "whole_image_spatial",   "characteristics",      "Whole Image Spatial",           "text",        "palette1",  list(legend = FALSE),
+  "overall_overall_rank",  "overall",       "Overall",    "bar",  "palette0",  list(width = 4, legend = FALSE),
+  "mean_rank",  "overall",       "Gene Expression Prediction",    "bar",  "palette1",  list(width = 4, legend = FALSE),
+  "mean_rank_visium_rank",  "overall",       "Gene Expression Prediction Visium",    "bar",  "palette2",  list(width = 4, legend = FALSE),
+  "overall_r_tcga",   "overall",      "Model Generalisability",           "bar",        "palette3",  list(width = 4, legend = FALSE),
+  "mean_clin_r",  "overall",       "Clinical Translational Impact",    "bar",  "palette4",  list(width = 4, legend = FALSE),
+  "usability_overall_score",   "overall",      "Usability",      "bar",        "palette5",  list(width = 4, legend = FALSE),
+  "perf_rank",  "overall",       "Computational Efficiency",    "bar",  "palette6",  list(width = 4, legend = FALSE),
+)
+
+# Define column groups
+column_groups <- tribble( # tribble_start
+  ~Experiment, ~Category,  ~group,         ~palette,
+  "Characteristics", "",  "characteristics",      "overall",
+  "Summary", "",  "overall",      "overall",
+  "Usability", "", "usability",       "palette5",
+  "Gene Expression Prediction ST", "", "ge_recap",       "palette1",
+  "Gene Expression Prediction Visium", "Visium BC", "ge_recap_whole_bc",       "palette2",
+  "Gene Expression Prediction Visium", "Visium Kidney", "ge_recap_kidney",       "palette2",
+  "Model Generalisability", "Gene-level", "ge_recap_tcga_gene",       "palette3",
+  "Model Generalisability", "Sample-level", "ge_recap_tcga_sample",       "palette3",
+  "Clinical Translation Impact", "", "ge_clinical_translation",       "palette4",
+  "Computational Efficiency", "", "ge_comp_eff",       "palette6"
+) 
+
+# Determine palettes
+generateColorPalette <- function(baseColor, numColors, rev=FALSE) {
+  # Create a gradient from the base color to a lighter version
+  colors <- colorRampPalette(c(baseColor, "white"))(numColors)
+  if (rev) {
+    colors=rev(colors)
+  }
+  return(colors)
+}
+
+palettes <- tribble(
+  ~palette,             ~colours,
+  "overall",            grDevices::colorRampPalette(rev(RColorBrewer::brewer.pal(9, "Greys")[-1]))(101),
+  # recapitulation gene expression - ST
+  "palette1",           rev(generateColorPalette("#92a5d1", 20)[5:18]), 
+  # gene expression - Visium
+  "palette2",           rev(generateColorPalette("#f18072", 20)[10:18]), 
+  # tcga prediction 
+  "palette3",           rev(generateColorPalette("#b696b6", 20)[5:18]), 
+  # clinical prediction 
+  "palette4",           rev(generateColorPalette("#94cbca", 20)[5:18]), 
+  # usability 
+  "palette5",           rev(generateColorPalette("#b2d3a4", 20)[5:18]), 
+  # efficiency
+  "palette6",           rev(generateColorPalette("#FDBF6F", 20)[5:18]), 
+  # overall
+  "palette0",           rev(generateColorPalette("#F4A582", 20)[5:18]), 
+)
+
+# Determine method grouping
+benchmark_all_df <- as.data.frame(benchmark_all_df)
+row_info <- benchmark_all_df %>% transmute(id, group = "he_st")
+row_groups <- tibble(Group = "H&E > ST", group = "he_st")
+
+g <- funky_heatmap(
+  data = benchmark_all_df,
+  column_info = column_info,
+  column_groups = column_groups,
+  row_info = row_info,
+  row_groups = row_groups,
+  palettes = palettes,
+  legends= list(list(geom="funkyrect", title="Score", palette="palette1")),
+  expand = list(xmax = 4) +
+  theme(
+  legend.background = element_rect(fill = "white", colour = NA),
+  legend.key = element_rect(fill = "transparent", colour = NA))
+)  + theme(
+    legend.background = element_rect(fill = "white", colour = NA),
+    legend.key = element_rect(fill = "transparent", colour = NA),
+    text = element_text(size = 12),     
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),      
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12),
+  )
+
+g
+```
+
+### Detailed Heatmap
+
+```{r fig.height=8, fig.width=16, message=FALSE}
+# Make a data frame with each of the models
+scale_values <- function(x){(x-min(x,na.rm=T))/(max(x,na.rm=T)-min(x,na.rm=T))}
+
+column_info_detailed <- tribble(
+  ~id,     ~group,         ~name,                      ~geom,        ~palette,    ~options,
+  "id",    NA,             "",                         "text",       NA,          list(hjust = 0, width = 3),
+  "cor_pearson_r",  "ge_recap",       "PCC",    "funkyrect",  "palette1",  lst(legend=TRUE),
+  "nrmse_r",  "ge_recap",       "NRMSE",    "funkyrect",  "palette1",  lst(legend=FALSE),
+  "js_div_r",  "ge_recap",       "JS-Div",    "funkyrect",  "palette1",  lst(legend=FALSE),
+  "mi_r",  "ge_recap",       "MI",    "funkyrect",  "palette1",  lst(legend=FALSE),
+  "ssim_r",  "ge_recap",       "SSIM",    "funkyrect",  "palette1",  lst(legend=FALSE),
+  "auc_r",  "ge_recap",       "AUC",    "funkyrect",  "palette1",  lst(legend=FALSE),
+  "cor_pearson_r_whole_bc",  "ge_recap_whole_bc",       "PCC",    "funkyrect",  "palette2",  lst(legend=TRUE),
+  "nrmse_r_whole_bc",  "ge_recap_whole_bc",       "NRMSE",    "funkyrect",  "palette2",  lst(legend=FALSE),
+  "js_div_r_whole_bc",  "ge_recap_whole_bc",       "JS-Div",    "funkyrect",  "palette2",  lst(legend=FALSE),
+  "mi_r_whole_bc",  "ge_recap_whole_bc",       "MI",    "funkyrect",  "palette2",  lst(legend=FALSE),
+  "ssim_r_whole_bc",  "ge_recap_whole_bc",       "SSIM",    "funkyrect",  "palette2",  lst(legend=FALSE),
+  "auc_r_whole_bc",  "ge_recap_whole_bc",       "AUC",    "funkyrect",  "palette2",  lst(legend=FALSE),
+  "cor_pearson_r_kidney",  "ge_recap_kidney",       "PCC",    "funkyrect",  "palette2",  lst(legend=TRUE),
+  "nrmse_r_kidney",  "ge_recap_kidney",       "NRMSE",    "funkyrect",  "palette2",  lst(legend=FALSE),
+  "js_div_r_kidney",  "ge_recap_kidney",       "JS-Div",    "funkyrect",  "palette2",  lst(legend=FALSE),
+  "mi_r_kidney",  "ge_recap_kidney",       "MI",    "funkyrect",  "palette2",  lst(legend=FALSE),
+  "ssim_r_kidney",  "ge_recap_kidney",       "SSIM",    "funkyrect",  "palette2",  lst(legend=FALSE),
+  "auc_r_kidney",  "ge_recap_kidney",       "AUC",    "funkyrect",  "palette2",  lst(legend=FALSE),
+  "cor_pearson_gene_r_tcga",  "ge_recap_tcga_gene",       "PCC",    "funkyrect",  "palette3",  lst(legend=FALSE),
+  "nrmse_gene_r_tcga",  "ge_recap_tcga_gene",       "NRMSE",    "funkyrect",  "palette3",  lst(legend=FALSE),
+  "js_div_gene_r_tcga",  "ge_recap_tcga_gene",       "JS-Div",    "funkyrect",  "palette3",  lst(legend=FALSE),
+  "mi_gene_r_tcga",  "ge_recap_tcga_gene",       "MI",    "funkyrect",  "palette3",  lst(legend=FALSE),
+  "mean_gene_rank_tcga",  "ge_recap_tcga_gene",       "Overall",    "funkyrect",  "palette3",  lst(legend=FALSE),
+  "cor_pearson_pat_r_tcga",  "ge_recap_tcga_sample",       "PCC",    "funkyrect",  "palette3",  lst(legend=FALSE),
+  "nrmse_pat_r_tcga",  "ge_recap_tcga_sample",       "NRMSE",    "funkyrect",  "palette3",  lst(legend=FALSE),
+  "js_div_pat_r_tcga",  "ge_recap_tcga_sample",       "JS-Div",    "funkyrect",  "palette3",  lst(legend=FALSE),
+  "mi_pat_r_tcga",  "ge_recap_tcga_sample",       "MI",    "funkyrect",  "palette3",  lst(legend=FALSE),
+  "mean_pat_rank_tcga",  "ge_recap_tcga_sample",       "Overall",    "funkyrect",  "palette3",  lst(legend=FALSE),
+  "cindex_r",  "ge_clinical_translation",       "C-index",    "funkyrect",  "palette4",  lst(legend=FALSE),
+  "surv_diff_r",  "ge_clinical_translation",       "Logrank p-value",    "funkyrect",  "palette4",  lst(legend=FALSE),
+  "availability",  "usability",  "Availability",    "funkyrect",  "palette5",  lst(legend=FALSE),
+  "behaviour",  "usability",       "Behaviour",    "funkyrect",  "palette5",  lst(legend=FALSE),
+  "code_assurance",  "usability",       "Code assurance",    "funkyrect",  "palette5",  lst(legend=FALSE),
+  "code_quality",  "usability",       "Code quality",    "funkyrect",  "palette5",  lst(legend=FALSE),
+  "documentation",  "usability",       "Documentation",    "funkyrect",  "palette5",  lst(legend=FALSE),
+  "generalisability",  "usability",       "Code generalisability",    "funkyrect",  "palette5",  lst(legend=FALSE),
+  "paper",  "usability",       "Paper",    "funkyrect",  "palette5",  lst(legend=FALSE),
+  "reproducibility",  "usability",       "Reproducibility",    "funkyrect",  "palette5",  lst(legend=FALSE),
+  "instantaneous_memory_r",  "ge_comp_eff",       "Instantaneous Mem.",    "funkyrect",  "palette6",  lst(legend=FALSE),
+  "peak_memory_r",  "ge_comp_eff",       "Peak Mem.",    "funkyrect",  "palette6",  lst(legend=FALSE),
+  "time_gpu_r",  "ge_comp_eff",       "Time (GPU)",    "funkyrect",  "palette6",  lst(legend=FALSE),
+  "time_cpu_r",  "ge_comp_eff",       "Time (CPU)",    "funkyrect",  "palette6",  lst(legend=FALSE),
+)
+
+# Define column groups
+column_groups <- tribble( # tribble_start
+  ~Experiment, ~Category,  ~group,         ~palette,
+  "Characteristics", "",  "characteristics",      "overall",
+  "Summary", "",  "overall",      "overall",
+  "Usability", "", "usability",       "palette5",
+  "GE Prediction ST", "", "ge_recap",       "palette1",
+  "GE Prediction Visium", "Visium BC", "ge_recap_whole_bc",       "palette2",
+  "GE Prediction Visium", "Visium Kidney", "ge_recap_kidney",       "palette2",
+  "Model Generalisability", "Gene-level", "ge_recap_tcga_gene",       "palette3",
+  "Model Generalisability", "Sample-level", "ge_recap_tcga_sample",       "palette3",
+  "Impact", "", "ge_clinical_translation",       "palette4",
+  "Efficiency", "", "ge_comp_eff",       "palette6"
+) 
+
+# Determine method grouping
+row_info <- benchmark_all_df %>% transmute(id, group = "he_st")
+row_groups <- tibble(Group = "H&E > ST", group = "he_st")
+
+g_2 <- funky_heatmap(
+  data = benchmark_all_df,
+  column_info = column_info_detailed,
+  column_groups = column_groups,
+  row_info = row_info,
+  row_groups = row_groups,
+  palettes = palettes,
+  legends = list(
+    list(
+      title = "Rank",
+      palette = "palette1",
+      geom = "funkyrect",
+      labels = c("NA", " ", "6", " ", "5", "", "4", "3", "2", "1"),
+      size = c(0, 0, .15, .3, .45, .6, .75, .85, .9, 1)
+    )
+  ),
+  expand = list(xmax = 4) +
+  theme(
+  legend.background = element_rect(fill = "white", colour = NA),
+  legend.key = element_rect(fill = "transparent", colour = NA), 
+    legend.title = element_text(size = 13), 
+    legend.text = element_text(size = 12)))
+  
+g_2
+```
+
+
+```{r}
+sessionInfo()
+```
+
+
