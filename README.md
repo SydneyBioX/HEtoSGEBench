@@ -8,7 +8,7 @@ This benchmarking pipeline is designed to provide a comprehensive evaluation of 
 (3) clinical translational impact through the prediction of survival outcomes and canonical pathological regions using predicted SGE from TCGA;<br>
 (4) usability of the methods encompassing code, documentation and the manuscript;<br>
 (5) the computational efficiency.<br>
-![image](https://github.com/SydneyBioX/HEtoSGEBench/blob/main/Framework.pdf)
+![image](https://github.com/SydneyBioX/HEtoSGEBench/blob/main/Framework.jpg)
 
 ### Processed Data
 The processed datasets required for reproduction are available on Zenodo and can be accessed via this DOI link:<br>
